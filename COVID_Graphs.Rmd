@@ -1,0 +1,326 @@
+---
+title: "R Personal Project"
+author: "Kian Afkhami"
+date: "9/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(janitor)
+library(gganimate)
+library(gifski)
+library(png)
+library(ggrepel)
+library(scales)
+library(zoo)
+
+#this downloads the latest data.
+global_cases_df <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+global_deaths_df <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
+
+head(global_cases_df)
+head(global_deaths_df)
+
+colnames(global_cases_df)[colnames(global_cases_df) == "Country/Region"] <- "Country"
+colnames(global_deaths_df)[colnames(global_deaths_df) == "Country/Region"] <- "Country"
+
+global_cases <- global_cases_df %>% select(c(2, 5:ncol(global_cases_df))) 
+ library(janitor)
+global_cases <- global_cases %>% group_by(Country) %>%
+summarize_at(vars(2:(ncol(global_cases_df)-4)), sum) %>% adorn_totals('row')
+global_cases$Country<- tolower(global_cases$Country)
+
+global_deaths<- global_deaths_df %>% select(c(2, 5:ncol(global_deaths_df))) 
+library(janitor)
+global_deaths <- global_deaths %>% group_by(Country) %>% 
+  summarize_at(vars(2:(ncol(global_deaths_df)-4)), sum) %>% adorn_totals('row')
+global_deaths$Country <- tolower(global_deaths$Country)
+
+country_list <- global_cases$Country
+
+global_cases <- global_cases %>% 
+  filter(Country %in%  country_list) %>%
+  dplyr::rename(region = Country)
+
+global_deaths <- global_deaths %>% 
+  filter(Country %in%  country_list) %>%
+  dplyr::rename(region = Country)
+
+new_col_names <- seq(as.Date("2020/1/21"), by = "day", length.out = ncol(global_cases)) #get dates in date-time format
+
+global_cases <- global_cases %>% 
+  setNames(new_col_names) %>%
+  dplyr::rename(region = "2020-01-21")
+
+global_deaths <- global_deaths %>% 
+  setNames(new_col_names) %>%
+  dplyr::rename(region = "2020-01-21")
+
+#Prepare data for plotting
+global_cases.long <- pivot_longer(global_cases, 
+                                  cols = c(2:ncol(global_cases)), 
+                                  names_to = "date", 
+                                  values_to = "cases")
+
+global_deaths.long <- pivot_longer(global_deaths, 
+                                  cols = c(2:ncol(global_cases)), 
+                                  names_to = "date", 
+                                  values_to = "cases")
+
+#creates plots
+  create_plot <- function(plot_1,weekly_plot, title, y_axis){
+  p_1 <- plot_1 %>%
+    ggplot(aes(x = as.Date(date),
+               y = cases,
+               group = region,
+               color = region))+
+    labs(title = title,
+         subtitle = "",
+         x = "Date",
+         y = y_axis)+
+    geom_point(alpha = .3, size = .8)+
+    geom_line(data = weekly_plot,aes(x = as.Date(date),
+                                     y = cases,
+                                     group = region,
+                                     color = region))+
+    scale_x_date(limits = as.Date(c(first(plot_1$date),last(plot_1$date))),
+                 date_breaks = "1 month",
+                 date_labels="%B")+
+    scale_y_continuous(labels = scales::comma)+
+    theme(
+      plot.title = element_text(color="black", size=14, face="bold.italic"),
+      axis.title.x = element_text(color="black", size=10),
+      axis.title.y = element_text(color="black", size=10))
+
+     p_1
+  }
+
+  #creates case plot data
+  create_cases_plot <- function(plot_countries, cumulative, title){
+    global_cases_plot<- filter(global_cases.long, region %in% plot_countries)
+    
+    if(cumulative){
+      cumulative_global_cases_plot <- global_cases_plot
+      
+      weekly_cumulative_global_cases_plot <- global_cases_plot
+      weekly_cumulative_global_cases_plot<- weekly_cumulative_global_cases_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+      
+      weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != last(weekly_cumulative_global_cases_plot$date), ]
+      
+      for(i in 1:6){ #removes first and last week to account for calculation error
+        weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != last(weekly_cumulative_global_cases_plot$date), ]
+        weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != first(weekly_cumulative_global_cases_plot$date), ]
+      }
+      
+      create_plot(cumulative_global_cases_plot, weekly_cumulative_global_cases_plot, title, "Cases" )
+    }
+    else{
+      daily_global_cases_plot <- global_cases_plot
+      
+      daily_global_cases_plot$cases <- daily_global_cases_plot$cases[1:nrow(daily_global_cases_plot) +1] - daily_global_cases_plot$cases
+      daily_global_cases_plot <-   daily_global_cases_plot[daily_global_cases_plot$date != last(daily_global_cases_plot$date), ] #removes first and last day to account for calculation error
+      daily_global_cases_plot <-   daily_global_cases_plot[daily_global_cases_plot$date != first(daily_global_cases_plot$date), ]
+      
+      weekly_global_cases_plot<- daily_global_cases_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+      
+      for(i in 1:6){ #removes first and last week to account for calculation error
+        weekly_global_cases_plot <- weekly_global_cases_plot[weekly_global_cases_plot$date != last(weekly_global_cases_plot$date), ]
+        weekly_global_cases_plot <- weekly_global_cases_plot[weekly_global_cases_plot$date != first(weekly_global_cases_plot$date), ]
+      }
+      create_plot(daily_global_cases_plot, weekly_global_cases_plot, title, "Cases" )
+    }
+  }
+  
+  #creates death plot data
+  create_deaths_plot <- function(plot_countries, cumulative, title){
+      global_deaths_plot<- filter(global_deaths.long, region %in% plot_countries)
+
+      if(cumulative){
+        cumulative_global_deaths_plot <- global_deaths_plot
+
+        weekly_cumulative_global_deaths_plot <- global_deaths_plot
+
+        weekly_cumulative_global_deaths_plot<- weekly_cumulative_global_deaths_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+        weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != first(weekly_cumulative_global_cases_plot$date), ]
+
+        for(i in 1:6){ #removes first and last week to account for calculation error
+          weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != first(weekly_cumulative_global_deaths_plot$date), ]
+          weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != last(weekly_cumulative_global_deaths_plot$date), ]
+        }
+        create_plot(cumulative_global_deaths_plot, weekly_cumulative_global_deaths_plot, title, "Deaths" )
+      }
+      else{
+        daily_global_deaths_plot <- global_deaths_plot
+
+        daily_global_deaths_plot$cases <- daily_global_deaths_plot$cases[1:nrow(daily_global_deaths_plot) +1] - daily_global_deaths_plot$cases
+        daily_global_deaths_plot <- daily_global_deaths_plot[daily_global_deaths_plot$date != last(daily_global_deaths_plot$date), ]
+        daily_global_deaths_plot <- daily_global_deaths_plot[daily_global_deaths_plot$date != first(daily_global_deaths_plot$date), ]
+
+        weekly_global_deaths_plot<- daily_global_deaths_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+
+        for(i in 1:6){ #removes first and last week to account for calculation error
+          weekly_global_deaths_plot <- weekly_global_deaths_plot[weekly_global_deaths_plot$date != first(weekly_global_deaths_plot$date), ]
+          weekly_global_deaths_plot <- weekly_global_deaths_plot[weekly_global_deaths_plot$date != last(weekly_global_deaths_plot$date), ]
+        }
+        create_plot(daily_global_deaths_plot, weekly_global_deaths_plot, title, "Deaths" )
+      }
+  }
+
+    #creates ratio plot data
+  create_ratio_plot <- function(plot_countries, title){
+      global_cases_plot<- filter(global_cases.long, region %in% plot_countries)
+      global_deaths_plot<- filter(global_deaths.long, region %in% plot_countries)
+      
+      global_cases_ratio <-  global_cases_plot
+      global_cases_ratio$cases <-  global_deaths_plot$cases / global_cases_ratio$cases
+
+      weekly_global_cases_ratio <-  global_cases_plot  %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+      ratio_death <- global_deaths_plot%>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+      weekly_global_cases_ratio$cases <-  ratio_death$cases / weekly_global_cases_ratio$cases
+      weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != first(weekly_global_cases_ratio$date),]
+
+      for(i in 1:6){ #removes first and last week to account for calculation error
+        weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != last(weekly_global_cases_ratio$date), ]
+        weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != first(weekly_global_cases_ratio$date), ]
+      }
+      create_plot(global_cases_ratio, weekly_global_cases_ratio, title, "Deaths : Cases" )
+  }
+  
+  #other functions and plots created during development of project but did not end up using in the final below
+  
+  #Choose states to plot
+#change/add countries by changing this list
+plot_countries <- c("us", "korea, south", "italy") #these are the countries we decided on
+
+#plot_countries <- c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india") #these are the countries I used for plots page(more interesting when shown together)
+
+
+#data for plotting specific states
+global_cases_plot<- filter(global_cases.long, region %in% plot_countries)
+global_deaths_plot<- filter(global_deaths.long, region %in% plot_countries)
+
+#cumulative
+cumulative_global_cases_plot <- global_cases_plot
+cumulative_global_deaths_plot <- global_deaths_plot
+
+
+
+#daily
+daily_global_cases_plot <- global_cases_plot
+daily_global_deaths_plot <- global_deaths_plot
+
+daily_global_cases_plot$cases <- daily_global_cases_plot$cases[1:nrow(daily_global_cases_plot) +1] - daily_global_cases_plot$cases
+daily_global_cases_plot <-   daily_global_cases_plot[daily_global_cases_plot$date != last(daily_global_cases_plot$date), ] #removes first and last day to account for calculation error
+daily_global_cases_plot <-   daily_global_cases_plot[daily_global_cases_plot$date != first(daily_global_cases_plot$date), ]
+
+daily_global_deaths_plot$cases <- daily_global_deaths_plot$cases[1:nrow(daily_global_deaths_plot) +1] - daily_global_deaths_plot$cases
+daily_global_deaths_plot <- daily_global_deaths_plot[daily_global_deaths_plot$date != last(daily_global_deaths_plot$date), ]
+daily_global_deaths_plot <- daily_global_deaths_plot[daily_global_deaths_plot$date != first(daily_global_deaths_plot$date), ]
+
+
+#weekly 
+
+weekly_global_cases_plot<- daily_global_cases_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+weekly_global_deaths_plot<- daily_global_deaths_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+
+#weekly cumulative
+weekly_cumulative_global_cases_plot <- global_cases_plot
+weekly_cumulative_global_deaths_plot <- global_deaths_plot
+
+weekly_cumulative_global_cases_plot<- weekly_cumulative_global_cases_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+weekly_cumulative_global_deaths_plot<- weekly_cumulative_global_deaths_plot %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+
+firstDay <- last(weekly_cumulative_global_cases_plot$date)
+lastDay <- last(weekly_cumulative_global_cases_plot$date)
+weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != last(weekly_cumulative_global_cases_plot$date), ]
+weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != first(weekly_cumulative_global_cases_plot$date), ]
+
+
+#death to cases ratio
+
+global_cases_ratio <-  global_cases_plot 
+global_cases_ratio$cases <-  global_deaths_plot$cases / global_cases_ratio$cases
+
+#weekly average death to cases ratio
+weekly_global_cases_ratio <-  global_cases_plot  %>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+ratio_death <- global_deaths_plot%>% dplyr::mutate(cases = zoo::rollmean(cases, k = 7, fill = NA))
+weekly_global_cases_ratio$cases <-  ratio_death$cases / weekly_global_cases_ratio$cases
+weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != first(weekly_global_cases_ratio$date),]
+                                                       
+
+
+for(i in 1:6){ #removes first and last week to account for calculation error
+  weekly_global_cases_plot <- weekly_global_cases_plot[weekly_global_cases_plot$date != last(weekly_global_cases_plot$date), ]
+  weekly_global_cases_plot <- weekly_global_cases_plot[weekly_global_cases_plot$date != first(weekly_global_cases_plot$date), ]
+  weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != last(weekly_cumulative_global_cases_plot$date), ]
+  weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != first(weekly_cumulative_global_deaths_plot$date), ]
+  weekly_cumulative_global_cases_plot <- weekly_cumulative_global_cases_plot[weekly_cumulative_global_cases_plot$date != first(weekly_cumulative_global_cases_plot$date), ]
+  weekly_cumulative_global_deaths_plot <- weekly_cumulative_global_deaths_plot[weekly_cumulative_global_deaths_plot$date != last(weekly_cumulative_global_deaths_plot$date), ]
+  weekly_global_deaths_plot <- weekly_global_deaths_plot[weekly_global_deaths_plot$date != first(weekly_global_deaths_plot$date), ]
+  weekly_global_deaths_plot <- weekly_global_deaths_plot[weekly_global_deaths_plot$date != last(weekly_global_deaths_plot$date), ]
+  weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != last(weekly_global_cases_ratio$date), ]
+  weekly_global_cases_ratio <- weekly_global_cases_ratio[weekly_global_cases_ratio$date != first(weekly_global_cases_ratio$date), ]
+}
+
+create_plot_single <- function(plot_1, title, y_axis){
+  p_1 <- plot_1 %>%
+    ggplot(aes(x = as.Date(date),
+               y = cases,
+               group = region,
+               color = region))+
+    labs(title = title,
+         subtitle = "",
+         x = "Date",
+         y = y_axis)+
+    geom_line()+
+    scale_x_date(limits = as.Date(c(first(plot_1$date),last(plot_1$date))),
+                 date_breaks = "1 month",
+                 date_labels="%B")+
+    scale_y_continuous(labels = scales::comma)+
+    theme(
+      plot.title = element_text(color="black", size=14, face="bold.italic"),
+      axis.title.x = element_text(color="black", size=10),
+      axis.title.y = element_text(color="black", size=10))
+  
+  p_1
+}
+
+#link to instructions for how to add/create plot using this code: https://umd.instructure.com/groups/370525/wiki
+  
+```
+
+
+
+```{r}
+# c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india")
+
+ create_cases_plot(c("us"), FALSE, "Weekly Average US COVID-19 Confirmed Cases")
+ create_deaths_plot(c("us"), FALSE, "Weekly Average US COVID-19 Confirmed Deaths")
+ create_ratio_plot(c("us"), "Weekly Average US COVID-19 Confirmed Cases")
+
+ create_cases_plot(c("us"), TRUE, "Cumulative US COVID-19 Confirmed Cases")
+ create_deaths_plot(c("us"), TRUE, "Cumulative US COVID-19 Confirmed Deaths")
+ 
+create_cases_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india"), FALSE, "Weekly Average COVID-19 Confirmed Cases")
+create_deaths_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india"), FALSE, "Weekly Average COVID-19 Confirmed Deaths")
+create_ratio_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india"), "Weekly Average COVID-19 Confirmed Cases")
+
+create_cases_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india", "total"), FALSE, "Weekly Average COVID-19 Confirmed Cases")
+create_deaths_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india", "total"), FALSE, "Weekly Average COVID-19 Confirmed Deaths")
+create_ratio_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india", "total"), "Weekly Average COVID-19 Confirmed Cases")
+create_cases_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india"), TRUE, "Cumulative COVID-19 Confirmed Cases")
+```
+ 
+
+```{r}
+create_cases_plot("us",TRUE,"US Cumulative COVID-19 Cases") + geom_point(aes(x= as.Date("2021-08-01"), y=35000000), color="red") +  geom_hline(yintercept = 35000000, color = "blue")
+# OR 
+create_cases_plot(c("us", "korea, south", "china", "united kingdom","sweden", "brazil", "india", "total"),FALSE,"") + geom_vline(xintercept = as.Date("2021-05-01"), color = "black")
+```
